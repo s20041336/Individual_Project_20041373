@@ -1,6 +1,7 @@
 import pandas as pd
-import xgboost 
-from sklearn.model_selection import GridSearchCV
+import lightgbm as lgbm
+import warnings
+warnings.filterwarnings("ignore")
 
 # read train data file and holiday table
 data_df = pd.read_csv("train.csv") 
@@ -16,9 +17,20 @@ data_df['day'] = pd.DatetimeIndex(data_df['date']).day
 data_df['weekday'] = (data_df['date'].dt.dayofweek) 
 data_df['workingday'] = (data_df['date'].dt.dayofweek<5).astype(int)
 
+
+#Import weather condition data from https://www.worldweatheronline.com/
+weather_df = pd.read_csv('hkweather.csv')
+weather_df['date_time'] = pd.to_datetime((weather_df['date_time']),format='%Y-%m-%d')
+weather_df = weather_df[['date_time','cloudcover','humidity', 'tempC','visibility','winddirDegree','windspeedKmph','WindChillC']]
+weather_df['year'] =  pd.DatetimeIndex(weather_df['date_time']).year
+weather_df['month'] = pd.DatetimeIndex(weather_df['date_time']).month
+weather_df['day'] = pd.DatetimeIndex(weather_df['date_time']).day
+weather_df = weather_df.drop(columns=['date_time'], axis=1);
+
 # join train data with holiday table
 holiday_df['holiday'] = 1
 data_df = pd.merge(data_df, holiday_df, how='left', on=['year', 'month','day'])
+data_df = pd.merge(data_df, weather_df, how='left', on=['year', 'month','day'])
 data_df['holiday'] = data_df['holiday'].fillna(0)
 
 #Deal with cat variables
@@ -31,16 +43,11 @@ data_df=pd.concat([data_df,dummies_month,dummies_weekday],axis=1)
 x = data_df.drop(columns=['speed','date','weekday','day','month'], axis=1)
 y = data_df['speed']
 
+# set parameters and build model
+param = {'max_depth': 12, 'num_trees':200, 'num_leaves': 110, 'objective':'regression', 'learning_rate':0.1}
+data_train_lgbm = lgbm.Dataset(x, y)
+model = lgbm.train(param, data_train_lgbm)
 
-# Fit the model with best parameter n_estimators=68
-params = {'learning_rate': [0.1],'n_estimators':list(range(50, 70))}
-other_params = {'max_depth': 7, 'min_child_weight': 13, 'seed': 0,
-                         'subsample': 0.8, 'colsample_bytree': 0.8, 'gamma': 0.15, 'reg_alpha': 0.2, 'reg_lambda': 1.5}      
-model = xgboost.XGBRegressor(**other_params)
-grid = GridSearchCV(estimator=model, param_grid=params, scoring='neg_mean_squared_error', cv=5, verbose=1, n_jobs=-1)
-grid.fit(x, y)
-model = xgboost.XGBRegressor(**other_params)
-model.fit(x, y)
 
 # Get test data
 test_df = pd.read_csv("test.csv")
@@ -60,6 +67,7 @@ test_df['workingday'] = (test_df['date'].dt.dayofweek<5).astype(int)
 # join test data with holiday table
 holiday_df['holiday'] = 1
 test_df = pd.merge(test_df, holiday_df, how='left', on=['year', 'month','day'])
+test_df = pd.merge(test_df, weather_df, how='left', on=['year', 'month','day'])
 test_df['holiday'] = test_df['holiday'].fillna(0)
 
 # Dummies for cat variables
@@ -73,4 +81,4 @@ test_x = test_df.drop(columns=['date','weekday','day','month'], axis=1)
 #predicting on the test set and creating submission file
 predict = model.predict(test_x)
 submission['speed'] = predict
-submission.to_csv('result.csv',index=False)
+submission.to_csv('result_final.csv',index=False)
